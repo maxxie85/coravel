@@ -1,166 +1,104 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using Coravel.Scheduling.Schedule.Event;
 using Coravel.Scheduling.Schedule.Interfaces;
 using Microsoft.Extensions.Logging;
-using System.Collections.Concurrent;
-using Coravel.Scheduling.Schedule.Event;
-using Microsoft.Extensions.DependencyInjection;
-using Coravel.Invocable;
-using Coravel.Events.Interfaces;
-using Coravel.Scheduling.Schedule.Broadcast;
-using System.Threading;
 
 namespace Coravel.Scheduling.Schedule
 {
-    public class Scheduler : IScheduler, ISchedulerConfiguration
+    public class Scheduler : IScheduler
     {
-        private ConcurrentDictionary<string, ScheduledTask> _tasks;
+        private const int EventLockTimeout24Hours = 1440;
+        private readonly CancellationTokenSource _cancellationTokenSource;
+        private readonly IMutex _mutex;
+        private readonly ConcurrentDictionary<string, ScheduledTask> _tasks;
         private Action<Exception> _errorHandler;
-        private ILogger<IScheduler> _logger;
-        private IMutex _mutex;
-        private readonly int EventLockTimeout_24Hours = 1440;
-        private IServiceScopeFactory _scopeFactory;
-        private int _schedulerIterationsActiveCount = 0;
-        private IDispatcher _dispatcher;
-        private string _currentWorkerName;
-        private CancellationTokenSource _cancellationTokenSource;
         private bool _isFirstTick = true;
+        private ILogger<IScheduler> _logger;
+        private int _schedulerIterationsActiveCount;
 
-        public Scheduler(IMutex mutex, IServiceScopeFactory scopeFactory, IDispatcher dispatcher)
+        public Scheduler(IMutex mutex, IEnumerable<IScheduledEvent> scheduledEvents)
         {
-            this._tasks = new ConcurrentDictionary<string, ScheduledTask>();
-            this._mutex = mutex;
-            this._scopeFactory = scopeFactory;
-            this._dispatcher = dispatcher;
-            this._currentWorkerName = "_default";
-            this._cancellationTokenSource = new CancellationTokenSource();
+            _mutex = mutex;
+            _cancellationTokenSource = new CancellationTokenSource();
+            _tasks = new ConcurrentDictionary<string, ScheduledTask>();
+
+            foreach (IScheduledEvent scheduledEvent in scheduledEvents)
+            {
+                _tasks.TryAdd(scheduledEvent.OverlappingUniqueIdentifier, new ScheduledTask("default", scheduledEvent));
+            }
         }
+
+        public bool IsRunning => _schedulerIterationsActiveCount > 0;
 
         public void CancelAllCancellableTasks()
         {
             if (!_cancellationTokenSource.IsCancellationRequested)
             {
-                this._cancellationTokenSource.Cancel();
+                _cancellationTokenSource.Cancel();
             }
-        }
-
-        public IScheduleInterval Schedule(Action actionToSchedule)
-        {
-            ScheduledEvent scheduled = new ScheduledEvent(actionToSchedule, this._scopeFactory);
-            this._tasks.TryAdd(scheduled.OverlappingUniqueIdentifier(), new ScheduledTask(this._currentWorkerName, scheduled));
-            return scheduled;
-        }
-
-        public IScheduleInterval ScheduleAsync(Func<Task> asyncTaskToSchedule)
-        {
-            ScheduledEvent scheduled = new ScheduledEvent(asyncTaskToSchedule, this._scopeFactory);
-            this._tasks.TryAdd(scheduled.OverlappingUniqueIdentifier(), new ScheduledTask(this._currentWorkerName, scheduled));
-            return scheduled;
-        }
-
-        public IScheduleInterval Schedule<T>() where T : IInvocable
-        {
-            ScheduledEvent scheduled = ScheduledEvent.WithInvocable<T>(this._scopeFactory);
-            this._tasks.TryAdd(scheduled.OverlappingUniqueIdentifier(), new ScheduledTask(this._currentWorkerName, scheduled));
-            return scheduled;
-        }
-
-        public IScheduleInterval ScheduleWithParams<T>(params object[] parameters) where T : IInvocable
-        {
-            ScheduledEvent scheduled = ScheduledEvent.WithInvocableAndParams<T>(this._scopeFactory, parameters);
-            this._tasks.TryAdd(scheduled.OverlappingUniqueIdentifier(), new ScheduledTask(this._currentWorkerName, scheduled));
-            return scheduled;
-        }
-
-        public IScheduleInterval ScheduleWithParams(Type invocableType, params object[] parameters)
-        {
-            ScheduledEvent scheduled = ScheduledEvent.WithInvocableAndParams(invocableType, this._scopeFactory, parameters);
-            this._tasks.TryAdd(scheduled.OverlappingUniqueIdentifier(), new ScheduledTask(this._currentWorkerName, scheduled));
-            return scheduled;
-        }
-
-        public IScheduleInterval ScheduleInvocableType(Type invocableType)
-        {
-            if (!typeof(IInvocable).IsAssignableFrom(invocableType))
-            {
-                throw new Exception("ScheduleInvocableType must be passed in a type that implements IInvocable.");
-            }
-
-            ScheduledEvent scheduled = ScheduledEvent.WithInvocableType(invocableType, this._scopeFactory);
-            this._tasks.TryAdd(scheduled.OverlappingUniqueIdentifier(), new ScheduledTask(this._currentWorkerName, scheduled));
-            return scheduled;
-        }
-
-        public IScheduler OnWorker(string workerName)
-        {
-            this._currentWorkerName = workerName;
-            return this;
         }
 
         public async Task RunAtAsync(DateTime utcDate)
         {
-            Interlocked.Increment(ref this._schedulerIterationsActiveCount);
-            bool isFirstTick = this._isFirstTick;
-            this._isFirstTick = false;
+            Interlocked.Increment(ref _schedulerIterationsActiveCount);
+            bool isFirstTick = _isFirstTick;
+            _isFirstTick = false;
             await RunWorkersAt(utcDate, isFirstTick);
-            Interlocked.Decrement(ref this._schedulerIterationsActiveCount);
+            Interlocked.Decrement(ref _schedulerIterationsActiveCount);
         }
 
-        public ISchedulerConfiguration OnError(Action<Exception> onError)
+        public IScheduler OnError(Action<Exception> onError)
         {
-            this._errorHandler = onError;
+            _errorHandler = onError;
             return this;
         }
 
-        public ISchedulerConfiguration LogScheduledTaskProgress(ILogger<IScheduler> logger)
+        public IScheduler LogScheduledTaskProgress(ILogger<IScheduler> logger)
         {
-            this._logger = logger;
+            _logger = logger;
             return this;
         }
-
-        public bool IsRunning => this._schedulerIterationsActiveCount > 0;
 
         public bool TryUnschedule(string uniqueIdentifier)
         {
-            var toUnSchedule = this._tasks.FirstOrDefault(scheduledEvent => scheduledEvent.Value.ScheduledEvent.OverlappingUniqueIdentifier() == uniqueIdentifier);
+            (string guid, ScheduledTask value) = _tasks.FirstOrDefault(scheduledEvent =>
+                                                                           scheduledEvent.Value.ScheduledEvent.OverlappingUniqueIdentifier ==
+                                                                           uniqueIdentifier);
 
-            if (toUnSchedule.Value != null)
-            {
-                var guid = toUnSchedule.Key;
-                return this._tasks.TryRemove(guid, out var dummy); // If failed, caller can try again etc.
-            }
-
-            return true; // Nothing to remove - was successful.
+            return value == null ||
+                   // Nothing to remove - was successful.
+                   _tasks.TryRemove(guid, out var dummy); // If failed, caller can try again etc.
         }
 
-        private async Task InvokeEventWithLoggerScope(ScheduledEvent scheduledEvent)
+        private async Task InvokeEventWithLoggerScope(IScheduledEvent scheduledEvent)
         {
-            var eventInvocableTypeName = scheduledEvent.InvocableType()?.Name;
-            using (_logger != null && eventInvocableTypeName != null ?
-                _logger.BeginScope($"Invocable Type : {eventInvocableTypeName}") : null)
+            var eventInvocableTypeName = scheduledEvent.InvocableType?.Name;
+
+            using (_logger != null && eventInvocableTypeName != null ? _logger.BeginScope($"Invocable Type : {eventInvocableTypeName}") : null)
             {
                 await InvokeEvent(scheduledEvent);
             }
         }
 
-        private async Task InvokeEvent(ScheduledEvent scheduledEvent)
+        private async Task InvokeEvent(IScheduledEvent scheduledEvent)
         {
             try
             {
-                await this.TryDispatchEvent(new ScheduledEventStarted(scheduledEvent));
-
                 async Task Invoke()
                 {
-                    this._logger?.LogDebug("Scheduled task started...");
-                    await scheduledEvent.InvokeScheduledEvent(this._cancellationTokenSource.Token);
-                    this._logger?.LogDebug("Scheduled task finished...");
-                };
+                    _logger?.LogDebug("Scheduled task started...");
+                    await scheduledEvent.InvokeScheduledEvent(_cancellationTokenSource.Token);
+                    _logger?.LogDebug("Scheduled task finished...");
+                }
 
-                if (scheduledEvent.ShouldPreventOverlapping())
+                if (scheduledEvent.ShouldPreventOverlapping)
                 {
-                    if (this._mutex.TryGetLock(scheduledEvent.OverlappingUniqueIdentifier(), EventLockTimeout_24Hours))
+                    if (_mutex.TryGetLock(scheduledEvent.OverlappingUniqueIdentifier, EventLockTimeout24Hours))
                     {
                         try
                         {
@@ -168,7 +106,7 @@ namespace Coravel.Scheduling.Schedule
                         }
                         finally
                         {
-                            this._mutex.Release(scheduledEvent.OverlappingUniqueIdentifier());
+                            _mutex.Release(scheduledEvent.OverlappingUniqueIdentifier);
                         }
                     }
                 }
@@ -176,23 +114,18 @@ namespace Coravel.Scheduling.Schedule
                 {
                     await Invoke();
                 }
-
-                await this.TryDispatchEvent(new ScheduledEventEnded(scheduledEvent));
             }
             catch (Exception e)
             {
-                await this.TryDispatchEvent(new ScheduledEventFailed(scheduledEvent, e));
-
-                this._logger?.LogError(e, "A scheduled task threw an Exception: ");
-
-                this._errorHandler?.Invoke(e);
+                _logger?.LogError(e, "A scheduled task threw an Exception: ");
+                _errorHandler?.Invoke(e);
             }
         }
 
         /// <summary>
-        /// This will grab all the scheduled tasks and combine each task into its assigned "worker".
-        /// Each worker runs on its own thread and will process its assigned scheduled tasks asynchronously.
-        /// This method return a list of active tasks (one per worker - which needs to be awaited).
+        ///     This will grab all the scheduled tasks and combine each task into its assigned "worker".
+        ///     Each worker runs on its own thread and will process its assigned scheduled tasks asynchronously.
+        ///     This method return a list of active tasks (one per worker - which needs to be awaited).
         /// </summary>
         /// <param name="utcDate"></param>
         /// <param name="isFirstTick"></param>
@@ -200,14 +133,14 @@ namespace Coravel.Scheduling.Schedule
         private async Task RunWorkersAt(DateTime utcDate, bool isFirstTick)
         {
             // Grab all the scheduled tasks so we can re-arrange them etc.
-            var scheduledWorkers = new List<ScheduledTask>();
+            List<ScheduledTask> scheduledWorkers = new List<ScheduledTask>();
 
-            foreach (var keyValue in this._tasks)
+            foreach (var keyValue in _tasks)
             {
-                var timerIsAtMinute = utcDate.Second == 0;
-                var taskIsSecondsBased = !keyValue.Value.ScheduledEvent.IsScheduledCronBasedTask();
-                var forceRunAtStart = isFirstTick && keyValue.Value.ScheduledEvent.ShouldRunOnceAtStart();
-                var canRunBasedOnTimeMarker = taskIsSecondsBased || timerIsAtMinute;
+                bool timerIsAtMinute = utcDate.Second == 0;
+                bool taskIsSecondsBased = !keyValue.Value.ScheduledEvent.IsScheduledCronBasedTask;
+                bool forceRunAtStart = isFirstTick && keyValue.Value.ScheduledEvent.ShouldRunOnceAtStart;
+                bool canRunBasedOnTimeMarker = taskIsSecondsBased || timerIsAtMinute;
 
                 // If this task is scheduled as a cron based task (should only be checked if due per min)
                 // but the time is not at the minute mark, we won't include those tasks to be checked if due.
@@ -226,19 +159,18 @@ namespace Coravel.Scheduling.Schedule
             // We want each "worker" (indicated by the "WorkerName" prop) to run on its own thread.
             // So we'll group all the "due" scheduled events (the actual work the user wants to perform) into
             // buckets for each "worker".
-            var groupedScheduledEvents = scheduledWorkers
-                .GroupBy(worker => worker.WorkerName);
+            IEnumerable<IGrouping<string, ScheduledTask>> groupedScheduledEvents = scheduledWorkers.GroupBy(worker => worker.WorkerName);
 
-            var activeTasks = groupedScheduledEvents.Select(workerWithTasks =>
+            IEnumerable<Task> activeTasks = groupedScheduledEvents.Select(workerWithTasks =>
             {
                 // Each group represents the "worker" for that group of scheduled events.
                 // Running them on a separate thread means we can segment longer running tasks
                 // onto their own thread, or maybe more cpu intensive operations onto an isolated thread, etc.
                 return Task.Run(async () =>
                 {
-                    foreach (var workerTask in workerWithTasks)
+                    foreach (ScheduledTask workerTask in workerWithTasks)
                     {
-                        var scheduledEvent = workerTask.ScheduledEvent;
+                        IScheduledEvent scheduledEvent = workerTask.ScheduledEvent;
                         await InvokeEventWithLoggerScope(scheduledEvent);
                     }
                 });
@@ -247,24 +179,16 @@ namespace Coravel.Scheduling.Schedule
             await Task.WhenAll(activeTasks);
         }
 
-        private async Task TryDispatchEvent(IEvent toBroadcast)
-        {
-            if (this._dispatcher != null)
-            {
-                await this._dispatcher.Broadcast(toBroadcast);
-            }
-        }
-
         private class ScheduledTask
         {
-            public ScheduledTask(string workerName, ScheduledEvent scheduledEvent)
+            public ScheduledTask(string workerName, IScheduledEvent scheduledEvent)
             {
-                this.WorkerName = workerName;
-                this.ScheduledEvent = scheduledEvent;
+                WorkerName = workerName;
+                ScheduledEvent = scheduledEvent;
             }
 
-            public ScheduledEvent ScheduledEvent { get; set; }
-            public string WorkerName { get; set; }
+            public IScheduledEvent ScheduledEvent { get; }
+            public string WorkerName { get; }
         }
     }
 }

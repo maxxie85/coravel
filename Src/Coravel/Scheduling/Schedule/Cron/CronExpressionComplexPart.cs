@@ -1,10 +1,8 @@
-﻿using System;
-
-namespace Coravel.Scheduling.Schedule.Cron
+﻿namespace Coravel.Scheduling.Schedule.Cron
 {
     public class CronExpressionComplexPart
     {
-        private string _expression;
+        private readonly string _expression;
 
         public CronExpressionComplexPart(string expression)
         {
@@ -12,7 +10,7 @@ namespace Coravel.Scheduling.Schedule.Cron
         }
 
         /// <summary>
-        /// From the cron expression, get all the int values that are valid due times.
+        ///     From the cron expression, get all the int values that are valid due times.
         /// </summary>
         /// <param name="time"></param>
         /// <returns></returns>
@@ -29,25 +27,24 @@ namespace Coravel.Scheduling.Schedule.Cron
 
             if (isDivisibleRange)
             {
-                return this.CheckDivisibleRange(_expression, time);
+                return CheckDivisibleRange(_expression, time);
             }
 
             if (isRange)
             {
-                return this.CheckRange(_expression, time);
+                return CheckRange(_expression, time);
             }
-            else if (isDelineatedArray)
+
+            if (isDelineatedArray)
             {
-                return this.CheckDelineatedArray(_expression, time);
+                return CheckDelineatedArray(_expression, time);
             }
-            else
-            {
-                return CheckIsSpecifiedInt(_expression, time);
-            }
+
+            return CheckIsSpecifiedInt(_expression, time);
         }
 
         /// <summary>
-        /// Get value from a cron expression with a single value.
+        ///     Get value from a cron expression with a single value.
         /// </summary>
         /// <param name="expression"></param>
         /// <param name="toCheck"></param>
@@ -65,7 +62,7 @@ namespace Coravel.Scheduling.Schedule.Cron
         }
 
         /// <summary>
-        /// Get values from cron expression like '5,4,3'.
+        ///     Get values from cron expression like '5,4,3'.
         /// </summary>
         /// <param name="expression"></param>
         /// <param name="toCheck"></param>
@@ -73,6 +70,7 @@ namespace Coravel.Scheduling.Schedule.Cron
         private bool CheckDelineatedArray(string expression, int toCheck)
         {
             var delineatedValues = expression.Split(',');
+
             foreach (var val in delineatedValues)
             {
                 if (!int.TryParse(val, out var parsedValue))
@@ -90,7 +88,7 @@ namespace Coravel.Scheduling.Schedule.Cron
         }
 
         /// <summary>
-        /// Get values from cron expression range (e.g.true '5-10').
+        ///     Get values from cron expression range (e.g.true '5-10').
         /// </summary>
         /// <param name="expression"></param>
         /// <param name="toCheck"></param>
@@ -107,11 +105,11 @@ namespace Coravel.Scheduling.Schedule.Cron
                 throw new MalformedCronExpressionException($"Cron expression ${expression} is malformed.");
             }
 
-            return this.IsBetween(first, second, toCheck);
+            return IsBetween(first, second, toCheck);
         }
 
         /// <summary>
-        /// Get values from cron expression range that has a divisor (e.g.true '5-10/2').
+        ///     Get values from cron expression range that has a divisor (e.g.true '5-10/2').
         /// </summary>
         /// <param name="expression"></param>
         /// <param name="toCheck"></param>
@@ -130,11 +128,11 @@ namespace Coravel.Scheduling.Schedule.Cron
                 throw new MalformedCronExpressionException($"Cron expression ${expression} is malformed.");
             }
 
-            return this.IsBetweenSkipping(first, second, divisor, toCheck);
+            return IsBetweenSkipping(first, second, divisor, toCheck);
         }
 
         /// <summary>
-        /// Get all int between (including) min and max.
+        ///     Get all int between (including) min and max.
         /// </summary>
         /// <param name="min"></param>
         /// <param name="max"></param>
@@ -154,7 +152,7 @@ namespace Coravel.Scheduling.Schedule.Cron
         }
 
         /// <summary>
-        /// Get all int between (including) min and max when the number is divisible by the divisor.
+        ///     Get all int between (including) min and max when the number is divisible by the divisor.
         /// </summary>
         /// <param name="min"></param>
         /// <param name="max"></param>

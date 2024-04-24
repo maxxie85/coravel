@@ -5,34 +5,35 @@ namespace Coravel.Tasks
 {
     public class ActionOrAsyncFunc
     {
-        private Action _action;
-        private Func<Task> _asyncAction;
-        private bool _isAsync;
-        public Guid Guid { get; }
+        private readonly Action _action;
+        private readonly Func<Task> _asyncAction;
+        private readonly bool _isAsync;
 
         public ActionOrAsyncFunc(Action action)
         {
-            this._isAsync = false;
-            this._action = action;
-            this.Guid = Guid.NewGuid();
+            _isAsync = false;
+            _action = action;
+            Guid = Guid.NewGuid();
         }
 
         public ActionOrAsyncFunc(Func<Task> asyncAction)
         {
-            this._isAsync = true;
-            this._asyncAction = asyncAction;
-            this.Guid = Guid.NewGuid();
+            _isAsync = true;
+            _asyncAction = asyncAction;
+            Guid = Guid.NewGuid();
         }
+
+        public Guid Guid { get; }
 
         public async Task Invoke()
         {
-            if (this._isAsync)
+            if (_isAsync)
             {
-                await this._asyncAction();
+                await _asyncAction();
             }
             else
             {
-                this._action();
+                _action();
             }
         }
     }

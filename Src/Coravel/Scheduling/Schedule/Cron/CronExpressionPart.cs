@@ -1,36 +1,35 @@
-using System;
-
 namespace Coravel.Scheduling.Schedule.Cron
 {
     /// <summary>
-    /// Represents a cron expression "part" parser needed for determining when events ought to be due.
+    ///     Represents a cron expression "part" parser needed for determining when events ought to be due.
     /// </summary>
     public class CronExpressionPart
     {
         /// <summary>
-        /// The cron expression used to determine when events are due.
+        ///     The cron expression used to determine when events are due.
         /// </summary>
-        private string _expression;
-        private int _timeParts;
+        private readonly string _expression;
+
+        private readonly int _timeParts;
 
         public CronExpressionPart(string expression, int timeParts)
         {
-            this._expression = expression.Trim();
-            this._timeParts = timeParts;
+            _expression = expression.Trim();
+            _timeParts = timeParts;
         }
 
         /// <summary>
-        /// Based on the cron expression, is this DateTime due?
+        ///     Based on the cron expression, is this DateTime due?
         /// </summary>
         /// <param name="time"></param>
         /// <returns></returns>
         public bool IsDue(int time)
         {
-            return this.CronExpressionPartIsDue(time, this._expression, this._timeParts);
+            return CronExpressionPartIsDue(time, _expression, _timeParts);
         }
 
         /// <summary>
-        /// Generic method to check if a part of the cron expression is due.
+        ///     Generic method to check if a part of the cron expression is due.
         /// </summary>
         /// <param name="time"></param>
         /// <param name="expression"></param>
@@ -64,10 +63,8 @@ namespace Coravel.Scheduling.Schedule.Cron
 
                 return time % divisor == 0;
             }
-            else
-            {
-                return new CronExpressionComplexPart(expression).CheckIfTimeIsDue(time);
-            }
+
+            return new CronExpressionComplexPart(expression).CheckIfTimeIsDue(time);
         }
     }
 }

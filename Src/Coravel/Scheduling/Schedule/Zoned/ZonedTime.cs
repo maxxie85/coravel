@@ -4,12 +4,14 @@ namespace Coravel.Scheduling.Schedule.Zoned
 {
     public class ZonedTime
     {
-        private TimeZoneInfo _info;
+        private readonly TimeZoneInfo _info;
+
         public ZonedTime(TimeZoneInfo info)
         {
-            this._info = info;
+            _info = info;
         }
 
+        // ReSharper disable once InconsistentNaming
         public static ZonedTime AsUTC()
         {
             return new ZonedTime(TimeZoneInfo.Utc);
@@ -17,13 +19,7 @@ namespace Coravel.Scheduling.Schedule.Zoned
 
         public DateTime Convert(DateTime time)
         {
-            if(this._info == TimeZoneInfo.Utc)
-            {
-                return time;
-            }
-            else {
-                return TimeZoneInfo.ConvertTime(time, this._info);
-            }
+            return _info.Equals(TimeZoneInfo.Utc) ? time : TimeZoneInfo.ConvertTime(time, _info);
         }
     }
 }

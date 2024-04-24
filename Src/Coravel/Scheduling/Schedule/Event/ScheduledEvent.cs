@@ -4,95 +4,81 @@ using System.Threading.Tasks;
 using Coravel.Invocable;
 using Coravel.Scheduling.Schedule.Cron;
 using Coravel.Scheduling.Schedule.Interfaces;
-using Coravel.Tasks;
 using Coravel.Scheduling.Schedule.Zoned;
-using Microsoft.Extensions.DependencyInjection;
+using Coravel.Tasks;
+using SimpleInjector;
 
 namespace Coravel.Scheduling.Schedule.Event
 {
-    public class ScheduledEvent : IScheduleInterval, IScheduledEventConfiguration
+    public interface IScheduledEvent : IScheduleInterval, IScheduledEventConfiguration
     {
+        string OverlappingUniqueIdentifier { get; }
+        bool IsScheduledCronBasedTask { get; }
+        bool ShouldRunOnceAtStart { get; }
+        Type InvocableType { get; }
+        bool ShouldPreventOverlapping { get; }
+        bool IsDue(DateTime utcDate);
+        Task InvokeScheduledEvent(CancellationToken cancellationToken);
+    }
+
+    public class ScheduledEvent : IScheduledEvent
+    {
+        private const int OneMinuteAsSeconds = 60;
+        private readonly ActionOrAsyncFunc _scheduledAction;
+        private readonly IScopeFactory _scopeFactory;
         private CronExpression _expression;
-        private ActionOrAsyncFunc _scheduledAction;
-        private Type _invocableType = null;
-        private bool _preventOverlapping = false;
-        private string _eventUniqueId = null;
-        private IServiceScopeFactory _scopeFactory;
+        private bool _isScheduledPerSecond;
+        private bool _runOnce;
+        private int? _secondsInterval;
+        private bool _wasPreviouslyRun;
         private Func<Task<bool>> _whenPredicate;
-        private bool _isScheduledPerSecond = false;
-        private int? _secondsInterval = null;
-        private object[] _constructorParameters = null;
         private ZonedTime _zonedTime = ZonedTime.AsUTC();
-        private bool _runOnceAtStart = false;
-        private bool _runOnce = false;
-        private bool _wasPreviouslyRun = false;
 
-        public ScheduledEvent(Action scheduledAction, IServiceScopeFactory scopeFactory) : this(scopeFactory)
+        public ScheduledEvent(Action scheduledAction, IScopeFactory scopeFactory) : this(scopeFactory)
         {
-            this._scheduledAction = new ActionOrAsyncFunc(scheduledAction);
+            _scheduledAction = new ActionOrAsyncFunc(scheduledAction);
         }
 
-        public ScheduledEvent(Func<Task> scheduledAsyncTask, IServiceScopeFactory scopeFactory) : this(scopeFactory)
+        public ScheduledEvent(Func<Task> scheduledAsyncTask, IScopeFactory scopeFactory) : this(scopeFactory)
         {
-            this._scheduledAction = new ActionOrAsyncFunc(scheduledAsyncTask);
+            _scheduledAction = new ActionOrAsyncFunc(scheduledAsyncTask);
         }
 
-        private ScheduledEvent(IServiceScopeFactory scopeFactory)
+        private ScheduledEvent(IScopeFactory scopeFactory)
         {
-            this._scopeFactory = scopeFactory;
-            this._eventUniqueId = Guid.NewGuid().ToString();
+            _scopeFactory = scopeFactory;
+            OverlappingUniqueIdentifier = Guid.NewGuid().ToString();
         }
 
-        public static ScheduledEvent WithInvocable<T>(IServiceScopeFactory scopeFactory) where T : IInvocable
+        public bool ShouldPreventOverlapping { get; private set; }
+        public string OverlappingUniqueIdentifier { get; private set; }
+        public bool IsScheduledCronBasedTask => !_isScheduledPerSecond;
+        public Type InvocableType { get; private init; }
+        public bool ShouldRunOnceAtStart { get; private set; }
+
+        public static ScheduledEvent WithInvocable<T>(IScopeFactory scopeFactory) where T : IInvocable
         {
             return WithInvocableType(typeof(T), scopeFactory);
         }
 
-        internal static ScheduledEvent WithInvocableAndParams<T>(IServiceScopeFactory scopeFactory, object[] parameters)
-            where T : IInvocable
+        public static ScheduledEvent WithInvocableType(Type invocableType, IScopeFactory scopeFactory)
         {
-            var scheduledEvent = WithInvocableType(typeof(T), scopeFactory);
-            scheduledEvent._constructorParameters = parameters;
+            ScheduledEvent scheduledEvent = new ScheduledEvent(scopeFactory) {InvocableType = invocableType};
             return scheduledEvent;
         }
-
-        internal static ScheduledEvent WithInvocableAndParams(Type invocableType, IServiceScopeFactory scopeFactory, object[] parameters)
-        {
-            if (!typeof(IInvocable).IsAssignableFrom(invocableType))
-            {
-                throw new ArgumentException(
-                    $"When using {nameof(IScheduler.ScheduleWithParams)}() you must supply a type that inherits from {nameof(IInvocable)}.",
-                    nameof(invocableType));
-            }
-
-            var scheduledEvent = WithInvocableType(invocableType, scopeFactory);
-            scheduledEvent._constructorParameters = parameters;
-            return scheduledEvent;
-        }
-
-        public static ScheduledEvent WithInvocableType(Type invocableType, IServiceScopeFactory scopeFactory)
-        {
-            var scheduledEvent = new ScheduledEvent(scopeFactory);
-            scheduledEvent._invocableType = invocableType;
-            return scheduledEvent;
-        }
-
-        private static readonly int _OneMinuteAsSeconds = 60;
 
         public bool IsDue(DateTime utcNow)
         {
-            var zonedNow = this._zonedTime.Convert(utcNow);
+            DateTime zonedNow = _zonedTime.Convert(utcNow);
 
-            if (this._isScheduledPerSecond)
+            if (!_isScheduledPerSecond)
             {
-                var isSecondDue = this.IsSecondsDue(zonedNow);
-                var isWeekDayDue = this._expression.IsWeekDayDue(zonedNow);
-                return isSecondDue && isWeekDayDue;
+                return _expression?.IsDue(zonedNow) ?? false;
             }
-            else
-            {
-                return this._expression.IsDue(zonedNow);
-            }
+
+            bool isSecondDue = IsSecondsDue(zonedNow);
+            bool isWeekDayDue = _expression.IsWeekDayDue(zonedNow);
+            return isSecondDue && isWeekDayDue;
         }
 
         public async Task InvokeScheduledEvent(CancellationToken cancellationToken)
@@ -102,234 +88,219 @@ namespace Coravel.Scheduling.Schedule.Event
                 return;
             }
 
-            if (this._invocableType is null)
+            if (InvocableType is null)
             {
-                await this._scheduledAction.Invoke();
+                await _scheduledAction.Invoke();
             }
             else
             {
-                await using AsyncServiceScope scope = new(this._scopeFactory.CreateAsyncScope());
-                if (GetInvocable(scope.ServiceProvider) is IInvocable invocable)
-                {
-                    if (invocable is ICancellableInvocable cancellableInvokable)
-                    {
-                        cancellableInvokable.CancellationToken = cancellationToken;
-                    }
+                await using Scope scope = _scopeFactory.BeginAsyncScope();
 
-                    await invocable.Invoke();
+                if (scope.GetInstance(InvocableType) is not IInvocable invocable)
+                {
+                    throw new InvalidCastException();
                 }
+
+                if (invocable is ICancellableInvocable cancellableInvokable)
+                {
+                    cancellableInvokable.CancellationToken = cancellationToken;
+                }
+
+                await invocable.Invoke();
             }
 
             MarkedAsExecutedOnce();
             UnScheduleIfWarranted();
         }
 
-        public bool ShouldPreventOverlapping() => this._preventOverlapping;
-
-        public string OverlappingUniqueIdentifier() => this._eventUniqueId;
-
-        public bool IsScheduledCronBasedTask() => !this._isScheduledPerSecond;
-
         public IScheduledEventConfiguration Daily()
         {
-            this._expression = new CronExpression("00 00 * * *");
+            _expression = new CronExpression("00 00 * * *");
             return this;
         }
 
         public IScheduledEventConfiguration DailyAtHour(int hour)
         {
-            this._expression = new CronExpression($"00 {hour} * * *");
+            _expression = new CronExpression($"00 {hour} * * *");
             return this;
         }
 
         public IScheduledEventConfiguration DailyAt(int hour, int minute)
         {
-            this._expression = new CronExpression($"{minute} {hour} * * *");
+            _expression = new CronExpression($"{minute} {hour} * * *");
             return this;
         }
 
         public IScheduledEventConfiguration Hourly()
         {
-            this._expression = new CronExpression($"00 * * * *");
+            _expression = new CronExpression("00 * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration HourlyAt(int minute)
         {
-            this._expression = new CronExpression($"{minute} * * * *");
+            _expression = new CronExpression($"{minute} * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryMinute()
         {
-            this._expression = new CronExpression($"* * * * *");
+            _expression = new CronExpression("* * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryFiveMinutes()
         {
-            this._expression = new CronExpression($"*/5 * * * *");
+            _expression = new CronExpression("*/5 * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryTenMinutes()
         {
             // todo fix "*/10" in cron part
-            this._expression = new CronExpression($"*/10 * * * *");
+            _expression = new CronExpression("*/10 * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryFifteenMinutes()
         {
-            this._expression = new CronExpression($"*/15 * * * *");
+            _expression = new CronExpression("*/15 * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryThirtyMinutes()
         {
-            this._expression = new CronExpression($"*/30 * * * *");
+            _expression = new CronExpression("*/30 * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration Weekly()
         {
-            this._expression = new CronExpression($"00 00 * * 1");
+            _expression = new CronExpression("00 00 * * 1");
             return this;
         }
 
         public IScheduledEventConfiguration Monthly()
         {
-            this._expression = new CronExpression($"00 00 1 * *");
+            _expression = new CronExpression("00 00 1 * *");
             return this;
         }
 
         public IScheduledEventConfiguration Cron(string cronExpression)
         {
-            this._expression = new CronExpression(cronExpression);
+            _expression = new CronExpression(cronExpression);
             return this;
         }
 
         public IScheduledEventConfiguration Monday()
         {
-            this._expression.AppendWeekDay(DayOfWeek.Monday);
+            _expression.AppendWeekDay(DayOfWeek.Monday);
             return this;
         }
 
         public IScheduledEventConfiguration Tuesday()
         {
-            this._expression.AppendWeekDay(DayOfWeek.Tuesday);
+            _expression.AppendWeekDay(DayOfWeek.Tuesday);
             return this;
         }
 
         public IScheduledEventConfiguration Wednesday()
         {
-            this._expression.AppendWeekDay(DayOfWeek.Wednesday);
+            _expression.AppendWeekDay(DayOfWeek.Wednesday);
             return this;
         }
 
         public IScheduledEventConfiguration Thursday()
         {
-            this._expression.AppendWeekDay(DayOfWeek.Thursday);
+            _expression.AppendWeekDay(DayOfWeek.Thursday);
             return this;
         }
 
         public IScheduledEventConfiguration Friday()
         {
-            this._expression.AppendWeekDay(DayOfWeek.Friday);
+            _expression.AppendWeekDay(DayOfWeek.Friday);
             return this;
         }
 
         public IScheduledEventConfiguration Saturday()
         {
-            this._expression.AppendWeekDay(DayOfWeek.Saturday);
+            _expression.AppendWeekDay(DayOfWeek.Saturday);
             return this;
         }
 
         public IScheduledEventConfiguration Sunday()
         {
-            this._expression.AppendWeekDay(DayOfWeek.Sunday);
+            _expression.AppendWeekDay(DayOfWeek.Sunday);
             return this;
         }
 
         public IScheduledEventConfiguration Weekday()
         {
-            this.Monday()
-                .Tuesday()
-                .Wednesday()
-                .Thursday()
-                .Friday();
+            Monday().Tuesday().Wednesday().Thursday().Friday();
             return this;
         }
 
         public IScheduledEventConfiguration Weekend()
         {
-            this.Saturday()
-                .Sunday();
+            Saturday().Sunday();
             return this;
         }
 
         public IScheduledEventConfiguration PreventOverlapping(string uniqueIdentifier)
         {
-            this._preventOverlapping = true;
-            return this.AssignUniqueIndentifier(uniqueIdentifier);
+            ShouldPreventOverlapping = true;
+            return AssignUniqueIdentifier(uniqueIdentifier);
         }
 
         public IScheduledEventConfiguration When(Func<Task<bool>> predicate)
         {
-            this._whenPredicate = predicate;
+            _whenPredicate = predicate;
             return this;
         }
 
-        public IScheduledEventConfiguration AssignUniqueIndentifier(string uniqueIdentifier)
+        public IScheduledEventConfiguration AssignUniqueIdentifier(string uniqueIdentifier)
         {
-            this._eventUniqueId = uniqueIdentifier;
+            OverlappingUniqueIdentifier = uniqueIdentifier;
             return this;
-        }
-
-        public Type InvocableType() => this._invocableType;
-
-        private async Task<bool> WhenPredicateFails()
-        {
-            return this._whenPredicate != null && (!await _whenPredicate.Invoke());
         }
 
         public IScheduledEventConfiguration EverySecond()
         {
-            this._secondsInterval = 1;
-            this._isScheduledPerSecond = true;
-            this._expression = new CronExpression("* * * * *");
+            _secondsInterval = 1;
+            _isScheduledPerSecond = true;
+            _expression = new CronExpression("* * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryFiveSeconds()
         {
-            this._secondsInterval = 5;
-            this._isScheduledPerSecond = true;
-            this._expression = new CronExpression("* * * * *");
+            _secondsInterval = 5;
+            _isScheduledPerSecond = true;
+            _expression = new CronExpression("* * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryTenSeconds()
         {
-            this._secondsInterval = 10;
-            this._isScheduledPerSecond = true;
-            this._expression = new CronExpression("* * * * *");
+            _secondsInterval = 10;
+            _isScheduledPerSecond = true;
+            _expression = new CronExpression("* * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryFifteenSeconds()
         {
-            this._secondsInterval = 15;
-            this._isScheduledPerSecond = true;
-            this._expression = new CronExpression("* * * * *");
+            _secondsInterval = 15;
+            _isScheduledPerSecond = true;
+            _expression = new CronExpression("* * * * *");
             return this;
         }
 
         public IScheduledEventConfiguration EveryThirtySeconds()
         {
-            this._secondsInterval = 30;
-            this._isScheduledPerSecond = true;
-            this._expression = new CronExpression("* * * * *");
+            _secondsInterval = 30;
+            _isScheduledPerSecond = true;
+            _expression = new CronExpression("* * * * *");
             return this;
         }
 
@@ -337,74 +308,68 @@ namespace Coravel.Scheduling.Schedule.Event
         {
             if (seconds < 1 || seconds > 59)
             {
-                throw new ArgumentException(
-                    "When calling 'EverySeconds(int seconds)', 'seconds' must be between 0 and 60");
+                throw new ArgumentException("When calling 'EverySeconds(int seconds)', 'seconds' must be between 0 and 60");
             }
 
-            this._secondsInterval = seconds;
-            this._isScheduledPerSecond = true;
-            this._expression = new CronExpression("* * * * *");
+            _secondsInterval = seconds;
+            _isScheduledPerSecond = true;
+            _expression = new CronExpression("* * * * *");
             return this;
         }
-
+        
         public IScheduledEventConfiguration Zoned(TimeZoneInfo timeZoneInfo)
         {
-            this._zonedTime = new ZonedTime(timeZoneInfo);
+            _zonedTime = new ZonedTime(timeZoneInfo);
             return this;
         }
 
         public IScheduledEventConfiguration RunOnceAtStart()
         {
-            this._runOnceAtStart = true;
+            ShouldRunOnceAtStart = true;
             return this;
         }
-        
+
         public IScheduledEventConfiguration Once()
         {
-            this._runOnce = true;
+            _runOnce = true;
             return this;
         }
-        
+
+        private async Task<bool> WhenPredicateFails()
+        {
+            return _whenPredicate != null && !await _whenPredicate.Invoke();
+        }
+
         private bool IsSecondsDue(DateTime utcNow)
         {
             if (utcNow.Second == 0)
             {
-                return _OneMinuteAsSeconds % this._secondsInterval == 0;
+                return OneMinuteAsSeconds % _secondsInterval == 0;
             }
-            else
-            {
-                return utcNow.Second % this._secondsInterval == 0;
-            }
+
+            return utcNow.Second % _secondsInterval == 0;
         }
 
-        internal bool ShouldRunOnceAtStart() => this._runOnceAtStart;
-        
-        private object GetInvocable(IServiceProvider serviceProvider)
+        private bool PreviouslyRanAndMarkedToRunOnlyOnce()
         {
-            if (this._constructorParameters?.Length > 0)
-            {
-                return ActivatorUtilities.CreateInstance(serviceProvider, this._invocableType,
-                    this._constructorParameters);
-            }
-
-            return serviceProvider.GetRequiredService(this._invocableType);
+            return _runOnce && _wasPreviouslyRun;
         }
 
-        private bool PreviouslyRanAndMarkedToRunOnlyOnce() => this._runOnce && this._wasPreviouslyRun;
-        
         private void MarkedAsExecutedOnce()
         {
-            this._wasPreviouslyRun = true;
+            _wasPreviouslyRun = true;
         }
-        
+
         private void UnScheduleIfWarranted()
         {
-            if (PreviouslyRanAndMarkedToRunOnlyOnce())
+            if (!PreviouslyRanAndMarkedToRunOnlyOnce())
             {
-                using var scope = this._scopeFactory.CreateScope();
-                var scheduler = scope.ServiceProvider.GetService<IScheduler>() as Scheduler;
-                scheduler.TryUnschedule(this._eventUniqueId);
+                return;
             }
+
+            using var scope = _scopeFactory.BeginAsyncScope();
+            var scheduler = scope.GetInstance<IScheduler>() as Scheduler;
+            scheduler.TryUnschedule(OverlappingUniqueIdentifier);
         }
     }
 }

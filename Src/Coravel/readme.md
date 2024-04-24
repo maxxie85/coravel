@@ -1,17 +1,20 @@
-﻿Coravel makes advanced application features accessible and easy-to-use by giving you a simple, 
-expressive and straightforward syntax - helping developers get their .NET Core applications up-and-running fast without compromising code quality.
+﻿Coravel makes advanced application features accessible and easy-to-use by giving you a simple,
+expressive and straightforward syntax - helping developers get their .NET Core applications up-and-running fast without
+compromising code quality.
 
 ## Features:
 
 ### Task Scheduling
 
-Usually, you have to configure a cron job or a task via Windows Task Scheduler to get a single or multiple re-occurring tasks to run.
+Usually, you have to configure a cron job or a task via Windows Task Scheduler to get a single or multiple re-occurring
+tasks to run.
 
 With Coravel, you can setup all your scheduled tasks in one place using a simple, elegant, fluent syntax - in code!
 
 ### Queuing
 
-Coravel gives you a zero-configuration queue that runs in-memory to offload long-winded tasks to the background instead of making your users wait for their HTTP request to finish!
+Coravel gives you a zero-configuration queue that runs in-memory to offload long-winded tasks to the background instead
+of making your users wait for their HTTP request to finish!
 
 ### Caching
 
@@ -40,7 +43,9 @@ E-mails are not as easy as they should be. Luckily for you, Coravel solves this 
 
 ## Coravel Pro
 
-If you are building a .NET Core application with EF Core, then you might want to look into [Coravel Pro](https://www.pro.coravel.net/). It is an admin panel & tools to make maintaining and managing your .NET Core app a breeze!
+If you are building a .NET Core application with EF Core, then you might want to look
+into [Coravel Pro](https://www.pro.coravel.net/). It is an admin panel & tools to make maintaining and managing your
+.NET Core app a breeze!
 
 - Visual job scheduling & management
 - Scaffold a CRUD UI for managing your EF Core entities

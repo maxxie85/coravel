@@ -2,7 +2,7 @@
 
 namespace Coravel.Invocable
 {
-    public interface ICancellableInvocable
+    public interface ICancellableInvocable : IInvocable
     {
         CancellationToken CancellationToken { get; set; }
     }

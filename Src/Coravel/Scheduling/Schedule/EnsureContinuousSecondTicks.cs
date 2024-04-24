@@ -7,16 +7,16 @@ namespace Coravel.Scheduling.Schedule;
 
 public class EnsureContinuousSecondTicks
 {
-    private DateTime previousTick;
+    private DateTime _previousTick;
 
     public EnsureContinuousSecondTicks(DateTime firstTick)
     {
-        previousTick = firstTick;
+        _previousTick = firstTick;
     }
 
     /// <summary>
-    /// Give this method when the next tick occurs and it will return any intermediary ticks that should
-    /// have existed been the stored previous tick and the next one.
+    ///     Give this method when the next tick occurs and it will return any intermediary ticks that should
+    ///     have existed been the stored previous tick and the next one.
     /// </summary>
     /// <param name="nextTick"></param>
     /// <returns></returns>
@@ -25,13 +25,11 @@ public class EnsureContinuousSecondTicks
         // Starting at previousTick, we move ahead one second a time and record the next time until we get to the "nextTick".
         // Then we check if there are any missed ticks between the two.
         List<DateTime> missingTicks = null; // We don't want to commit any memory until we know for sure there's at least 1 missed tick.
-        DateTime nextTickToTest = previousTick.PreciseUpToSecond().AddSeconds(1);
+        DateTime nextTickToTest = _previousTick.PreciseUpToSecond().AddSeconds(1);
+
         while (nextTickToTest < nextTick.PreciseUpToSecond())
         {
-            if (missingTicks is null)
-            {
-                missingTicks = new List<DateTime>();
-            }
+            missingTicks ??= new List<DateTime>();
             missingTicks.Add(nextTickToTest);
             nextTickToTest = nextTickToTest.PreciseUpToSecond().AddSeconds(1);
         }
@@ -41,6 +39,6 @@ public class EnsureContinuousSecondTicks
 
     public void SetNextTick(DateTime nextTick)
     {
-        previousTick = nextTick;
+        _previousTick = nextTick;
     }
 }

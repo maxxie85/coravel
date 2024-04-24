@@ -4,8 +4,6 @@ namespace Coravel.Scheduling.Schedule.Cron
 {
     public class MalformedCronExpressionException : Exception
     {
-        public MalformedCronExpressionException(string message) : base(message)
-        {
-        }
+        public MalformedCronExpressionException(string message) : base(message) { }
     }
 }
