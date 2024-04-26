@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Coravel.Tasks
+namespace Coravel.Scheduling.Tasks
 {
     public class ActionOrAsyncFunc
     {

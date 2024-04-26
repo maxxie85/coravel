@@ -2,10 +2,11 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Coravel.Invocable;
+using Coravel.Scheduling.Invocable;
 using Coravel.Scheduling.Schedule.Cron;
 using Coravel.Scheduling.Schedule.Interfaces;
 using Coravel.Scheduling.Schedule.Zoned;
-using Coravel.Tasks;
+using Coravel.Scheduling.Tasks;
 using SimpleInjector;
 
 namespace Coravel.Scheduling.Schedule.Event
@@ -21,7 +22,7 @@ namespace Coravel.Scheduling.Schedule.Event
         Task InvokeScheduledEvent(CancellationToken cancellationToken);
     }
 
-    public class ScheduledEvent : IScheduledEvent
+    internal sealed class ScheduledEvent : IScheduledEvent
     {
         private const int OneMinuteAsSeconds = 60;
         private readonly ActionOrAsyncFunc _scheduledAction;

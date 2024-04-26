@@ -2,7 +2,7 @@ using System;
 
 namespace Coravel.Scheduling.Schedule.Zoned
 {
-    public class ZonedTime
+    internal class ZonedTime
     {
         private readonly TimeZoneInfo _info;
 

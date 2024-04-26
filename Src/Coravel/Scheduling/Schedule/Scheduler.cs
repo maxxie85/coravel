@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Coravel.Scheduling.Schedule
 {
-    public class Scheduler : IScheduler
+    internal sealed class Scheduler : IScheduler
     {
         private const int EventLockTimeout24Hours = 1440;
         private readonly CancellationTokenSource _cancellationTokenSource;

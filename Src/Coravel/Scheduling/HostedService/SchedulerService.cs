@@ -14,7 +14,7 @@ public interface ISchedulerService
     Task StopAsync(CancellationToken token);
 }
 
-public class SchedulerService : ISchedulerService
+internal sealed class SchedulerService : ISchedulerService
 {
     private const string ScheduledTasksRunningMessage = "Coravel's Scheduling service is attempting to close but there are tasks still running." +
                                                         " App closing (in background) will be prevented until all tasks are completed.";

@@ -5,16 +5,11 @@ using Coravel.Scheduling.Schedule.UtcTime;
 
 namespace Coravel.Scheduling.Schedule.Mutex
 {
-    public class InMemoryMutex : IMutex
+    internal sealed class InMemoryMutex : IMutex
     {
         private readonly object _lock = new object();
         private readonly Dictionary<string, MutexItem> _mutexCollection = new Dictionary<string, MutexItem>();
-        private IUtcTime _utcTime;
-
-        public InMemoryMutex()
-        {
-            _utcTime = new SystemUtcTime();
-        }
+        private IUtcTime _utcTime = new SystemUtcTime();
 
         /// <summary>
         ///     Used to override the default usage of DateTime.UtcNow.
